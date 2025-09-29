@@ -6,7 +6,9 @@ on:
       - main
     paths:
       - "mini-tft-esp32s3.bin"
-
+  
+  workflow_dispatch:
+   
 jobs:
   mqtt-notify:
     runs-on: ubuntu-latest
