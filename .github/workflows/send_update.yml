@@ -1,0 +1,35 @@
+name: Notify over MQTT when file changes
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "mini-tft-esp32s3.bin"   # adjust this to the file you want
+
+jobs:
+  mqtt-notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install mosquitto client
+        run: sudo apt-get update && sudo apt-get install -y mosquitto-clients
+
+      - name: Get latest release tag
+        id: get_tag
+        run: |
+          latest_tag=$(gh release list --limit 1 --json tagName --jq '.[0].tagName')
+          echo "tag=$latest_tag" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Send MQTT message
+        run: |
+          mosquitto_pub -h ${{ secrets.MQTT_HOST }} \
+                        -p ${{ secrets.MQTT_PORT }} \
+                        -u ${{ secrets.MQTT_USER }} \
+                        -P ${{ secrets.MQTT_PASSWORD }} \
+                        -t "${{ secrets.MQTT_PATH }}" \
+                        -m "${{ steps.get_tag.outputs.tag }}"
