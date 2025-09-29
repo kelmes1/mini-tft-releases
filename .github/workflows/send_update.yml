@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - "mini-tft-esp32s3.bin"   # adjust this to the file you want
+      - "mini-tft-esp32s3.bin"
 
 jobs:
   mqtt-notify:
@@ -14,8 +14,13 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Install mosquitto client
-        run: sudo apt-get update && sudo apt-get install -y mosquitto-clients
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install MQTT client
+        run: npm install mqtt
 
       - name: Get latest release tag
         id: get_tag
@@ -25,11 +30,31 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Send MQTT message
+      - name: Send MQTT message (WSS)
         run: |
-          mosquitto_pub -h ${{ secrets.MQTT_HOST }} \
-                        -p ${{ secrets.MQTT_PORT }} \
-                        -u ${{ secrets.MQTT_USER }} \
-                        -P ${{ secrets.MQTT_PASSWORD }} \
-                        -t "${{ secrets.MQTT_PATH }}" \
-                        -m "${{ steps.get_tag.outputs.tag }}"
+          node - <<'EOF'
+          const mqtt = require("mqtt");
+
+          const client = mqtt.connect(`wss://${process.env.MQTT_HOST}:${process.env.MQTT_PORT}`, {
+            username: process.env.MQTT_USER,
+            password: process.env.MQTT_PASSWORD,
+          });
+
+          client.on("connect", () => {
+            client.publish(process.env.MQTT_PATH, process.env.RELEASE_TAG, {}, () => {
+              client.end();
+            });
+          });
+
+          client.on("error", (err) => {
+            console.error("MQTT connection error:", err);
+            process.exit(1);
+          });
+          EOF
+        env:
+          MQTT_HOST: ${{ secrets.MQTT_HOST }}
+          MQTT_PORT: ${{ secrets.MQTT_PORT }}
+          MQTT_USER: ${{ secrets.MQTT_USER }}
+          MQTT_PASSWORD: ${{ secrets.MQTT_PASSWORD }}
+          MQTT_PATH: ${{ secrets.MQTT_PATH }}
+          RELEASE_TAG: ${{ steps.get_tag.outputs.tag }}
