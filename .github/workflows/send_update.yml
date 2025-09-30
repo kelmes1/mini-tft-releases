@@ -65,7 +65,7 @@ jobs:
           });
           EOF
         env:
-          MQTT_host: ${{ secrets.MQTT_HOST }}
+          MQTT_HOST: ${{ secrets.MQTT_HOST }}
           MQTT_USER: ${{ secrets.MQTT_USER }}
           MQTT_PASSWORD: ${{ secrets.MQTT_PASSWORD }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
