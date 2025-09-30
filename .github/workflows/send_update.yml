@@ -31,69 +31,157 @@ jobs:
           echo "tag=$latest_tag" >> $GITHUB_OUTPUT
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Send MQTT message (with Puppeteer solving CF-Access)
+      
+      - name: Send MQTT message (WSS via CF Access fetch)
         run: |
+          npm install mqtt
           node - <<'EOF'
-          const puppeteer = require('puppeteer');
           const mqtt = require('mqtt');
-
-          (async () => {
-            // Launch headless browser
-            const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
-            const page = await browser.newPage();
-
-            // Set Cloudflare Access headers
-            await page.setExtraHTTPHeaders({
-              'CF-Access-Client-Id': process.env.CF_ACCESS_CLIENT_ID,
-              'CF-Access-Client-Secret': process.env.CF_ACCESS_CLIENT_SECRET
+          const { URL } = require('url');
+          const http = require('http');
+          const https = require('https');
+      
+          const maxRedirects = 5;
+          const target = process.env.MQTT_HOST; // e.g. wss://mqtt.kelmes.nl/mqtt
+          const accessId = process.env.CF_ACCESS_CLIENT_ID;
+          const accessSecret = process.env.CF_ACCESS_CLIENT_SECRET;
+          const originHost = (new URL(target.replace(/^wss:/, 'https:'))).origin;
+      
+          function httpFetch(urlStr, headers = {}, redirects = 0) {
+            return new Promise((resolve, reject) => {
+              if (redirects > maxRedirects) return reject(new Error('Too many redirects'));
+              const url = new URL(urlStr);
+              const lib = url.protocol === 'https:' ? https : http;
+              const opts = {
+                method: 'GET',
+                hostname: url.hostname,
+                port: url.port || (url.protocol === 'https:' ? 443 : 80),
+                path: url.pathname + url.search,
+                headers: Object.assign({
+                  'User-Agent': 'github-actions-cf-access-check/1.0',
+                  'Accept': '*/*',
+                  'Origin': originHost
+                }, headers),
+                timeout: 15000
+              };
+      
+              const req = lib.request(opts, (res) => {
+                const { statusCode, headers: resHeaders } = res;
+      
+                // collect body for debug
+                let body = '';
+                res.on('data', (d) => body += d.toString());
+                res.on('end', () => {
+                  if (statusCode >= 300 && statusCode < 400 && resHeaders.location) {
+                    // follow redirect
+                    const location = new URL(resHeaders.location, urlStr).toString();
+                    return resolve(httpFetch(location, headers, redirects + 1));
+                  }
+                  resolve({ statusCode, headers: resHeaders, body });
+                });
+              });
+      
+              req.on('timeout', () => {
+                req.destroy(new Error('Timeout'));
+              });
+      
+              req.on('error', (err) => reject(err));
+              req.end();
             });
-
-            // Visit MQTT endpoint to get valid session
-            await page.goto(process.env.MQTT_HOST.replace(/^wss:/, 'https:'));
-            const cookies = await page.cookies();
-
-            // Extract the CF_AppSession cookie
-            const sessionCookie = cookies.find(c => c.name === 'CF_AppSession');
-
-            await browser.close();
-
-            if (!sessionCookie) {
-              console.error("Failed to get CF_AppSession cookie");
+          }
+      
+          (async () => {
+            try {
+              console.log('1) Attempting HTTP fetch to obtain CF Access cookies...');
+              const headers = {
+                'CF-Access-Client-Id': accessId,
+                'CF-Access-Client-Secret': accessSecret
+              };
+      
+              const httpsUrl = target.replace(/^wss:/, 'https:');
+              const resp = await httpFetch(httpsUrl, headers);
+      
+              console.log('HTTP status:', resp.statusCode);
+              if (resp.headers['set-cookie']) {
+                console.log('Set-Cookie headers:', resp.headers['set-cookie'].slice(0,5));
+              } else {
+                console.log('No Set-Cookie in response. Response length (chars):', resp.body.length);
+              }
+      
+              // gather cookies into single string
+              const setCookie = resp.headers['set-cookie'];
+              let cookieHeader = null;
+              if (Array.isArray(setCookie) && setCookie.length) {
+                // prefer CF_AppSession but include all cookies
+                cookieHeader = setCookie.map(c => c.split(';')[0]).join('; ');
+              }
+      
+              if (!cookieHeader) {
+                console.warn('No cookies received from CF Access fetch. Will still attempt WS handshake with CF headers only.');
+              } else {
+                console.log('Using cookie header:', cookieHeader.slice(0,200));
+              }
+      
+              console.log('2) Attempting MQTT over WSS...');
+      
+              const wsHeaders = {
+                'sec-websocket-protocol': 'mqtt',
+                'Origin': originHost,
+                'User-Agent': 'github-actions-mqtt/1.0',
+                // include CF Access headers as well (some setups accept headers rather than cookie)
+                'CF-Access-Client-Id': accessId,
+                'CF-Access-Client-Secret': accessSecret
+              };
+              if (cookieHeader) wsHeaders['Cookie'] = cookieHeader;
+      
+              const options = {
+                username: process.env.MQTT_USER,
+                password: process.env.MQTT_PASSWORD,
+                connectTimeout: 20000,
+                reconnectPeriod: 0, // fail fast in CI
+                wsOptions: {
+                  headers: wsHeaders
+                }
+              };
+      
+              console.log('Connecting to', target);
+              const client = mqtt.connect(target, options);
+      
+              client.on('connect', () => {
+                console.log('MQTT connected — publishing...');
+                client.publish(process.env.MQTT_PATH || 'test/topic', process.env.RELEASE_TAG || 'ci-test', {}, (err) => {
+                  if (err) console.error('Publish error', err);
+                  else console.log('Published ok:', process.env.RELEASE_TAG);
+                  client.end(true, () => process.exit(err ? 1 : 0));
+                });
+              });
+      
+              client.on('close', () => console.log('MQTT close'));
+              client.on('offline', () => console.log('MQTT offline'));
+              client.on('end', () => console.log('MQTT end'));
+              client.on('reconnect', () => console.log('MQTT reconnecting...'));
+              client.on('error', (err) => {
+                console.error('MQTT error event', err);
+                process.exit(1);
+              });
+      
+              // try to log HTTP response if websocket upgrade returns an HTTP response
+              client.stream && client.stream.on && client.stream.on('response', (res) => {
+                console.log('HTTP response on stream:', res.statusCode, res.headers && JSON.stringify(res.headers));
+              });
+      
+            } catch (err) {
+              console.error('Fatal error:', err && err.stack ? err.stack : err);
               process.exit(1);
             }
-
-            // Connect MQTT using session cookie in the WebSocket headers
-            const options = {
-              username: process.env.MQTT_USER,
-              password: process.env.MQTT_PASSWORD,
-              wsOptions: {
-                headers: {
-                  'Cookie': `${sessionCookie.name}=${sessionCookie.value}`,
-                  'sec-websocket-protocol': 'mqtt'
-                }
-              }
-            };
-
-            const client = mqtt.connect(process.env.MQTT_HOST, options);
-
-            client.on('connect', () => {
-              client.publish(process.env.MQTT_PATH, process.env.RELEASE_TAG, {}, () => {
-                console.log("Published:", process.env.RELEASE_TAG);
-                client.end();
-              });
-            });
-
-            client.on('error', (err) => {
-              console.error("MQTT connection error:", err);
-              process.exit(1);
-            });
           })();
           EOF
         env:
           MQTT_HOST: ${{ secrets.MQTT_HOST }}
+          MQTT_PATH: ${{ secrets.MQTT_PATH }}
           MQTT_USER: ${{ secrets.MQTT_USER }}
           MQTT_PASSWORD: ${{ secrets.MQTT_PASSWORD }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
           RELEASE_TAG: ${{ steps.get_tag.outputs.tag }}
+
