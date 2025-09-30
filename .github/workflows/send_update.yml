@@ -2,13 +2,50 @@ name: Notify over MQTT when file changes
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - "mini-tft-esp32s3.bin"
+    branches: [ main ]
+    paths: [ "mini-tft-esp32s3.bin" ]
   workflow_dispatch:
 
 jobs:
   mqtt-notify:
-    runs-on: [self-hosted, proxmox]  # label you gave the runner
+    runs-on: [self-hosted, proxmox] 
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install mqtt package
+        run: npm install mqtt --no-audit --no-fund
+
+      - name: Get latest release tag
+        id: get_tag
+        run: |
+          latest_tag=$(gh release list --limit 1 --json tagName --jq '.[0].tagName')
+          echo "tag=$latest_tag" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Debug connectivity (optional)
+        run: |
+          echo "curl debug (from self-hosted runner):"
+          curl -I -sS https://$(echo ${{ secrets.MQTT_HOST }} | sed -E 's#^wss://##; s#/.*$##')/mqtt || true
+        # optional; shows whether the runner reaches the host
+
+      - name: Run MQTT publisher
+        env:
+          MQTT_HOST: ${{ secrets.MQTT_HOST }}              
+          MQTT_PATH: ${{ secrets.MQTT_PATH }}    
+          MQTT_USER: ${{ secrets.MQTT_USER }}
+          MQTT_PASSWORD: ${{ secrets.MQTT_PASSWORD }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}       # optional
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }} # optional
+          RELEASE_TAG: ${{ steps.get_tag.outputs.tag }}
+          MQTT_ATTEMPTS: 4
+          MQTT_RETRY_DELAY_MS: 3000
+          MQTT_CONNECT_TIMEOUT_MS: 15000
+        run: |
+          node send-mqtt.js
