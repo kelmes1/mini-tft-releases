@@ -63,7 +63,7 @@ async function publishOnce() {
       if (timedOut) return;
       clearTimeout(timer);
       console.log('mqtt: connected — publishing to', TOPIC);
-      client.publish(TOPIC, PAYLOAD, { qos: 1 }, (err) => {
+      client.publish(TOPIC, PAYLOAD, { qos: 1,  retain: true }, (err) => {
         if (err) {
           console.error('mqtt: publish error', err);
           try { client.end(true); } catch(e) {}
