@@ -31,13 +31,7 @@ jobs:
           echo "tag=$latest_tag" >> $GITHUB_OUTPUT
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Debug network
-        run: |
-          curl -i https://mqtt.kelmes.nl/mqtt
-          nslookup mqtt.kelmes.nl
-
-
+          
       - name: Send MQTT message (WSS)
         run: |
           node - <<'EOF'
@@ -71,7 +65,7 @@ jobs:
           });
           EOF
         env:
-          MQTT_URL: wss://mqtt.kelmes.nl/mqtt
+          MQTT_host: ${{ secrets.MQTT_HOST }}
           MQTT_USER: ${{ secrets.MQTT_USER }}
           MQTT_PASSWORD: ${{ secrets.MQTT_PASSWORD }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
