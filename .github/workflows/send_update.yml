@@ -48,4 +48,4 @@ jobs:
           MQTT_RETRY_DELAY_MS: 3000
           MQTT_CONNECT_TIMEOUT_MS: 15000
         run: |
-          node send-mqtt.js
+          node .github/workflows/send-mqtt.js
