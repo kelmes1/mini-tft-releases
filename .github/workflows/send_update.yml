@@ -21,6 +21,7 @@ jobs:
         with:
           node-version: 20
 
+
       - name: Install MQTT client
         run: npm install mqtt
 
@@ -31,6 +32,15 @@ jobs:
           echo "tag=$latest_tag" >> $GITHUB_OUTPUT
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: test curl
+        run: |
+          curl -i -v \
+          -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+          -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+          https://mqtt.kelmes.nl/mqtt
+
+
           
       - name: Send MQTT message (WSS)
         run: |
