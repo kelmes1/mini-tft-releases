@@ -32,6 +32,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Debug network
+        run: |
+          curl -i https://mqtt.kelmes.nl/mqtt
+          nslookup mqtt.kelmes.nl
+
+
       - name: Send MQTT message (WSS)
         run: |
           node - <<'EOF'
