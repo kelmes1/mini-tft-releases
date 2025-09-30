@@ -40,6 +40,65 @@ jobs:
           -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
           https://mqtt.kelmes.nl/mqtt
 
+name: Test MQTT WSS Connection
+
+on:
+  workflow_dispatch:
+
+jobs:
+  mqtt-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install mqtt ws
+
+      - name: Test MQTT WSS connection
+        run: |
+          node - <<'EOF'
+          const mqtt = require("mqtt");
+
+          const options = {
+            username: process.env.MQTT_USER,
+            password: process.env.MQTT_PASSWORD,
+            wsOptions: {
+              headers: {
+                'CF-Access-Client-Id': process.env.CF_ACCESS_CLIENT_ID,
+                'CF-Access-Client-Secret': process.env.CF_ACCESS_CLIENT_SECRET,
+                'Origin': 'https://mqtt.kelmes.nl',
+                'sec-websocket-protocol': 'mqtt'
+              }
+            }
+          };
+
+          console.log("Attempting MQTT WSS connection...");
+
+          const client = mqtt.connect(process.env.MQTT_HOST, options);
+
+          client.on("connect", () => {
+            console.log("✅ Connected successfully!");
+            client.end();
+          });
+
+          client.on("error", (err) => {
+            console.error("❌ Connection failed:", err.message);
+            process.exit(1);
+          });
+
+          client.on("close", () => {
+            console.log("Connection closed");
+          });
+          EOF
+        env:
+          MQTT_HOST: wss://mqtt.kelmes.nl/mqtt
+          MQTT_USER: ${{ secrets.MQTT_USER }}
+          MQTT_PASSWORD: ${{ secrets.MQTT_PASSWORD }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
 
           
       - name: Send MQTT message (WSS)
