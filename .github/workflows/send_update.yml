@@ -6,9 +6,8 @@ on:
       - main
     paths:
       - "mini-tft-esp32s3.bin"
-  
   workflow_dispatch:
-   
+
 jobs:
   mqtt-notify:
     runs-on: ubuntu-latest
@@ -21,9 +20,9 @@ jobs:
         with:
           node-version: 20
 
-
-      - name: Install MQTT client
-        run: npm install mqtt
+      - name: Install dependencies
+        run: |
+          npm install mqtt puppeteer
 
       - name: Get latest release tag
         id: get_tag
@@ -33,105 +32,63 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: test curl
-        run: |
-          curl -i -v \
-          -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
-          -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
-          https://mqtt.kelmes.nl/mqtt
-
-name: Test MQTT WSS Connection
-
-on:
-  workflow_dispatch:
-
-jobs:
-  mqtt-test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install dependencies
-        run: npm install mqtt ws
-
-      - name: Test MQTT WSS connection
+      - name: Send MQTT message (with Puppeteer solving CF-Access)
         run: |
           node - <<'EOF'
-          const mqtt = require("mqtt");
+          const puppeteer = require('puppeteer');
+          const mqtt = require('mqtt');
 
-          const options = {
-            username: process.env.MQTT_USER,
-            password: process.env.MQTT_PASSWORD,
-            wsOptions: {
-              headers: {
-                'CF-Access-Client-Id': process.env.CF_ACCESS_CLIENT_ID,
-                'CF-Access-Client-Secret': process.env.CF_ACCESS_CLIENT_SECRET,
-                'Origin': 'https://mqtt.kelmes.nl',
-                'sec-websocket-protocol': 'mqtt'
-              }
-            }
-          };
+          (async () => {
+            // Launch headless browser
+            const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+            const page = await browser.newPage();
 
-          console.log("Attempting MQTT WSS connection...");
-
-          const client = mqtt.connect(process.env.MQTT_HOST, options);
-
-          client.on("connect", () => {
-            console.log("✅ Connected successfully!");
-            client.end();
-          });
-
-          client.on("error", (err) => {
-            console.error("❌ Connection failed:", err.message);
-            process.exit(1);
-          });
-
-          client.on("close", () => {
-            console.log("Connection closed");
-          });
-          EOF
-        env:
-          MQTT_HOST: wss://mqtt.kelmes.nl/mqtt
-          MQTT_USER: ${{ secrets.MQTT_USER }}
-          MQTT_PASSWORD: ${{ secrets.MQTT_PASSWORD }}
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
-
-          
-      - name: Send MQTT message (WSS)
-        run: |
-          node - <<'EOF'
-          const mqtt = require("mqtt");
-      
-          const options = {
-            username: process.env.MQTT_USER,
-            password: process.env.MQTT_PASSWORD,
-            wsOptions: {
-              headers: {
-                'CF-Access-Client-Id': process.env.CF_ACCESS_CLIENT_ID,
-                'CF-Access-Client-Secret': process.env.CF_ACCESS_CLIENT_SECRET,
-                'sec-websocket-protocol': 'mqtt'
-              }
-            }
-          };
-          
-          const client = mqtt.connect(process.env.MQTT_HOST, options);
-
-      
-          client.on("connect", () => {
-            client.publish(process.env.MQTT_PATH, process.env.RELEASE_TAG, {}, () => {
-              console.log("Published:", process.env.RELEASE_TAG);
-              client.end();
+            // Set Cloudflare Access headers
+            await page.setExtraHTTPHeaders({
+              'CF-Access-Client-Id': process.env.CF_ACCESS_CLIENT_ID,
+              'CF-Access-Client-Secret': process.env.CF_ACCESS_CLIENT_SECRET
             });
-          });
-      
-          client.on("error", (err) => {
-            console.error("MQTT connection error:", err);
-            process.exit(1);
-          });
+
+            // Visit MQTT endpoint to get valid session
+            await page.goto(process.env.MQTT_HOST.replace(/^wss:/, 'https:'));
+            const cookies = await page.cookies();
+
+            // Extract the CF_AppSession cookie
+            const sessionCookie = cookies.find(c => c.name === 'CF_AppSession');
+
+            await browser.close();
+
+            if (!sessionCookie) {
+              console.error("Failed to get CF_AppSession cookie");
+              process.exit(1);
+            }
+
+            // Connect MQTT using session cookie in the WebSocket headers
+            const options = {
+              username: process.env.MQTT_USER,
+              password: process.env.MQTT_PASSWORD,
+              wsOptions: {
+                headers: {
+                  'Cookie': `${sessionCookie.name}=${sessionCookie.value}`,
+                  'sec-websocket-protocol': 'mqtt'
+                }
+              }
+            };
+
+            const client = mqtt.connect(process.env.MQTT_HOST, options);
+
+            client.on('connect', () => {
+              client.publish(process.env.MQTT_PATH, process.env.RELEASE_TAG, {}, () => {
+                console.log("Published:", process.env.RELEASE_TAG);
+                client.end();
+              });
+            });
+
+            client.on('error', (err) => {
+              console.error("MQTT connection error:", err);
+              process.exit(1);
+            });
+          })();
           EOF
         env:
           MQTT_HOST: ${{ secrets.MQTT_HOST }}
@@ -139,3 +96,4 @@ jobs:
           MQTT_PASSWORD: ${{ secrets.MQTT_PASSWORD }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          RELEASE_TAG: ${{ steps.get_tag.outputs.tag }}
