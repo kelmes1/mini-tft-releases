@@ -43,11 +43,20 @@ jobs:
           node - <<'EOF'
           const mqtt = require("mqtt");
       
-          const url = process.env.MQTT_HOST; // already includes wss://hostname.nl/mqtt
-          const client = mqtt.connect(url, {
+          const options = {
             username: process.env.MQTT_USER,
             password: process.env.MQTT_PASSWORD,
-          });
+            wsOptions: {
+              headers: {
+                'CF-Access-Client-Id': process.env.CF_ACCESS_CLIENT_ID,
+                'CF-Access-Client-Secret': process.env.CF_ACCESS_CLIENT_SECRET,
+                'sec-websocket-protocol': 'mqtt'
+              }
+            }
+          };
+          
+          const client = mqtt.connect(process.env.MQTT_HOST, options);
+
       
           client.on("connect", () => {
             client.publish(process.env.MQTT_PATH, process.env.RELEASE_TAG, {}, () => {
@@ -62,8 +71,8 @@ jobs:
           });
           EOF
         env:
-          MQTT_HOST: ${{ secrets.MQTT_HOST }}   # e.g. wss://hostname.nl/mqtt
+          MQTT_URL: wss://mqtt.kelmes.nl/mqtt
           MQTT_USER: ${{ secrets.MQTT_USER }}
           MQTT_PASSWORD: ${{ secrets.MQTT_PASSWORD }}
-          MQTT_PATH: ${{ secrets.MQTT_PATH }}
-          RELEASE_TAG: ${{ steps.get_tag.outputs.tag }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
