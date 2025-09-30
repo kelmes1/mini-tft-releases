@@ -36,47 +36,28 @@ jobs:
         run: |
           node - <<'EOF'
           const mqtt = require("mqtt");
-
-          // Full URL from secrets, e.g. "wss://hostname.nl/mqtt"
-          const url = process.env.MQTT_HOST;
-
-          const options = {
+      
+          const url = process.env.MQTT_HOST; // already includes wss://hostname.nl/mqtt
+          const client = mqtt.connect(url, {
             username: process.env.MQTT_USER,
             password: process.env.MQTT_PASSWORD,
-
-            // --- TLS handling ---
-            // Default: strict certificate validation
-            rejectUnauthorized: true,
-          };
-
-          // If you're using a self-signed cert, flip this secret to "true"
-          if (process.env.MQTT_INSECURE === "true") {
-            options.rejectUnauthorized = false;
-          }
-
-          const client = mqtt.connect(url, options);
-
+          });
+      
           client.on("connect", () => {
-            console.log("Connected to broker:", url);
-            client.publish(process.env.MQTT_PATH, process.env.RELEASE_TAG, {}, (err) => {
-              if (err) {
-                console.error("Publish error:", err);
-                process.exit(1);
-              }
-              console.log("Published:", process.env.RELEASE_TAG, "to", process.env.MQTT_PATH);
+            client.publish(process.env.MQTT_PATH, process.env.RELEASE_TAG, {}, () => {
+              console.log("Published:", process.env.RELEASE_TAG);
               client.end();
             });
           });
-
+      
           client.on("error", (err) => {
             console.error("MQTT connection error:", err);
             process.exit(1);
           });
           EOF
         env:
-          MQTT_HOST: ${{ secrets.MQTT_HOST }}       # e.g. wss://hostname.nl/mqtt
+          MQTT_HOST: ${{ secrets.MQTT_HOST }}   # e.g. wss://hostname.nl/mqtt
           MQTT_USER: ${{ secrets.MQTT_USER }}
           MQTT_PASSWORD: ${{ secrets.MQTT_PASSWORD }}
           MQTT_PATH: ${{ secrets.MQTT_PATH }}
           RELEASE_TAG: ${{ steps.get_tag.outputs.tag }}
-          MQTT_INSECURE: ${{ secrets.MQTT_INSECURE }} # optional, set to "true" for self-signed
