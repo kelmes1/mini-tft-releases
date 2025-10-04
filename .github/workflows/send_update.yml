@@ -3,7 +3,7 @@ name: Notify over MQTT when file changes
 on:
   push:
     branches: [ main ]
-    paths: [ "mini-tft-esp32s3.bin" ]
+    paths: [ "mini-tft.bin" ]
   workflow_dispatch:
 
 jobs:
