@@ -1,9 +1,9 @@
 name: Notify over MQTT when new bin file release is published
 
 on:
-  release:
-    types: [published]   # triggers when a release is published
-  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths: [ "mini-tft.bin" ]
 
 jobs:
   mqtt-notify:
