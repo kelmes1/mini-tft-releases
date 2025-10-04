@@ -1,14 +1,13 @@
-name: Notify over MQTT when file changes
+name: Notify over MQTT when new bin file release is published
 
 on:
-  push:
-    branches: [ main ]
-    paths: [ "mini-tft.bin" ]
+  release:
+    types: [published]   # triggers when a release is published
   workflow_dispatch:
 
 jobs:
   mqtt-notify:
-    runs-on: [self-hosted, proxmox] 
+    runs-on: [self-hosted, proxmox]
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -21,28 +20,24 @@ jobs:
       - name: Install mqtt package
         run: npm install mqtt --no-audit --no-fund
 
-      - name: Get latest release tag
+      - name: Get release tag
         id: get_tag
         run: |
-          latest_tag=$(gh release list --limit 1 --json tagName --jq '.[0].tagName')
-          echo "tag=$latest_tag" >> $GITHUB_OUTPUT
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
 
       - name: Debug connectivity (optional)
         run: |
           echo "curl debug (from self-hosted runner):"
           curl -I -sS https://$(echo ${{ secrets.MQTT_HOST }} | sed -E 's#^wss://##; s#/.*$##')/mqtt || true
-        # optional; shows whether the runner reaches the host
 
       - name: Run MQTT publisher
         env:
-          MQTT_HOST: ${{ secrets.MQTT_HOST }}              
-          MQTT_PATH: ${{ secrets.MQTT_PATH }}    
+          MQTT_HOST: ${{ secrets.MQTT_HOST }}
+          MQTT_PATH: ${{ secrets.MQTT_PATH }}
           MQTT_USER: ${{ secrets.MQTT_USER }}
           MQTT_PASSWORD: ${{ secrets.MQTT_PASSWORD }}
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}       # optional
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }} # optional
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
           RELEASE_TAG: ${{ steps.get_tag.outputs.tag }}
           MQTT_ATTEMPTS: 4
           MQTT_RETRY_DELAY_MS: 3000
