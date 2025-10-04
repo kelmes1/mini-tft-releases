@@ -12,16 +12,50 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Ensure release tag is semver
+      - name: Read and validate release tag
+        id: get_tag
         run: |
-          tag="${{ github.event.release.tag_name }}"
-          echo "Release tag: $tag"
-          if ! [[ "$tag" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Tag '$tag' is not a semver (expected like v1.2.3). Aborting."
+          set -euo pipefail
+
+          # Try version.txt first (created by build-and-release)
+          if [ -f version.txt ]; then
+            tag=$(sed -n '1p' version.txt | tr -d '[:space:]')
+            echo "Found tag in version.txt: $tag"
+          else
+            # Try manifest.json next
+            if [ -f manifest.json ]; then
+              # Extract "version": "..." using a safe grep/sed method (no jq required)
+              tag=$(grep -oP '"version"\s*:\s*"\K[^"]+' manifest.json || true)
+              tag="$(echo -n "$tag" | tr -d '[:space:]')"
+              if [ -n "$tag" ]; then
+                echo "Found tag in manifest.json: $tag"
+              fi
+            fi
+
+            # Fallback: try to find a vX.Y.Z token in the latest commit message
+            if [ -z "${tag:-}" ]; then
+              msg=$(git --no-pager log -1 --pretty=%B || echo "")
+              tag=$(echo "$msg" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?' | head -n1 || true)
+              if [ -n "$tag" ]; then
+                echo "Found tag in commit message: $tag"
+              fi
+            fi
+          fi
+
+          if [ -z "${tag:-}" ]; then
+            echo "ERROR: No tag found (checked version.txt, manifest.json, and commit message). Aborting."
             exit 1
           fi
+
+          # Semver validation (allow optional leading 'v')
+          if ! [[ "$tag" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "ERROR: Tag '$tag' is not a semver (expected like v1.2.3). Aborting."
+            exit 1
+          fi
+
           echo "tag=$tag" >> $GITHUB_OUTPUT
-          
+          echo "RELEASE_TAG=$tag" >> $GITHUB_ENV
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -29,11 +63,6 @@ jobs:
 
       - name: Install mqtt package
         run: npm install mqtt --no-audit --no-fund
-
-      - name: Get release tag
-        id: get_tag
-        run: |
-          echo "tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
 
       - name: Debug connectivity (optional)
         run: |
