@@ -1,5 +1,5 @@
 {
   "type": "esp32-fota-http",
-  "version": "v0.8.9",
+  "version": "vv0.8.10",
   "url": "https://raw.githubusercontent.com/kelmes1/mini-tft-releases/main/mini-tft.bin"
 }
